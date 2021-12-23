@@ -4,14 +4,16 @@ from __future__ import print_function
 
 import errno
 import os
-import setuptools
 import subprocess
 import sys
+
+import setuptools
 from wheel.bdist_wheel import bdist_wheel
 
 
 class platform_bdist_wheel(bdist_wheel):
     """Patched bdist_well to make sure wheels include platform tag."""
+
     def finalize_options(self):
         bdist_wheel.finalize_options(self)
         self.root_is_pure = False
@@ -28,8 +30,7 @@ def mkdir_p(path):
 
 def configure_c_extension():
     """Configure cmake project to C extension."""
-    print("Configuring for python {}.{}...".format(sys.version_info.major,
-                                                   sys.version_info.minor))
+    print("Configuring for python {}.{}...".format(sys.version_info.major, sys.version_info.minor))
     mkdir_p('cmake_build')
     cmake_command = [
         'cmake',
@@ -48,9 +49,13 @@ def build_c_extension():
 configure_c_extension()
 build_c_extension()
 
+install_requires = []
+with open("requirements.txt") as f:
+    install_requires = f.read().splitlines()
+
 setuptools.setup(
     name='opensfm',
-    version='0.4.0',
+    version='0.5.1',
     description='A Structure from Motion library',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
@@ -97,4 +102,4 @@ setuptools.setup(
     #     'Pillow>=6.0.0',
     # ],
     cmdclass={'bdist_wheel': platform_bdist_wheel},
-)
+    install_requires=install_requires)

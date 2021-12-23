@@ -312,7 +312,9 @@ defined(__DOXYGEN__)
 #if defined(VL_COMPILER_MSC) & ! defined(__DOXYGEN__)
 #  define VL_UNUSED
 #  define VL_INLINE static __inline
+#if _MSC_VER < 1900
 #  define snprintf _snprintf
+#endif
 #  define isnan _isnan
 #  ifdef VL_BUILD_DLL
 #    ifdef __cplusplus
@@ -322,9 +324,9 @@ defined(__DOXYGEN__)
 #    endif
 #  else
 #    ifdef __cplusplus
-#      define VL_EXPORT extern "C" __declspec(dllimport)
+#      define VL_EXPORT extern "C"
 #    else
-#      define VL_EXPORT extern __declspec(dllimport)
+#      define VL_EXPORT extern
 #    endif
 #  endif
 #endif
@@ -387,7 +389,7 @@ typedef unsigned int        vl_uint ;    /**< @brief Same as <code>unsigned int<
 typedef int                 vl_bool ;    /**< @brief Boolean. */
 typedef vl_int64            vl_intptr ;  /**< @brief Integer holding a pointer. */
 typedef vl_uint64           vl_uintptr ; /**< @brief Unsigned integer holding a pointer. */
-typedef vl_uint64           vl_size ;    /**< @brief Unsigned integer holding the size of a memory block. */
+typedef vl_int64            vl_size ;    /**< @brief Integer holding the size of a memory block. */
 typedef vl_int64            vl_index ;   /**< @brief Signed version of ::vl_size and ::vl_uindex */
 typedef vl_uint64           vl_uindex ;  /**< @brief Same as ::vl_size */
 #endif
