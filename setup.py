@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 
+
 import setuptools
 from sphinx.setup_command import BuildDoc
 from wheel.bdist_wheel import bdist_wheel
@@ -59,6 +60,10 @@ def build_c_extension():
 configure_c_extension()
 build_c_extension()
 
+install_requires = []
+with open("requirements.txt") as f:
+    install_requires = f.read().splitlines()
+
 setuptools.setup(
     name="opensfm",
     version=version_str(VERSION),
@@ -106,4 +111,6 @@ setuptools.setup(
             "build_dir": ("setup.py", "build/doc"),
         }
     },
+    install_requires=install_requires
 )
+
