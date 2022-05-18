@@ -10,7 +10,7 @@ import numpy as np
 from opensfm import multiview, transformations as tf, types, pygeometry, pymap
 
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def align_reconstruction(
@@ -67,6 +67,10 @@ def apply_similarity(
     # Align rig instances
     for rig_instance in reconstruction.rig_instances.values():
         apply_similarity_pose(rig_instance.pose, s, A, b)
+
+    # Scale rig cameras
+    for rig_camera in reconstruction.rig_cameras.values():
+        apply_similarity_pose(rig_camera.pose, s, np.eye(3), np.array([0, 0, 0]))
 
 
 def compute_reconstruction_similarity(
@@ -281,9 +285,12 @@ def compute_orientation_prior_similarity(
             b = max_scale * b / current_scale
             s = max_scale / current_scale
     else:
-        T = tf.affine_matrix_from_points(
-            X.T[:2], Xp.T[:2], shear=False, scale=use_scale
-        )
+        try:
+            T = tf.affine_matrix_from_points(
+                X.T[:2], Xp.T[:2], shear=False, scale=use_scale
+            )
+        except ValueError:
+            return None
         s = np.linalg.det(T[:2, :2]) ** 0.5
         A = np.eye(3)
         A[:2, :2] = T[:2, :2] / s
@@ -368,6 +375,9 @@ def estimate_ground_plane(
     onplane, verticals = [], []
     for shot in reconstruction.shots.values():
         R = shot.pose.get_rotation_matrix()
+        if not shot.metadata.orientation.has_value:
+            continue
+
         x, y, z = get_horizontal_and_vertical_directions(
             R, shot.metadata.orientation.value
         )
@@ -436,11 +446,13 @@ def triangulate_all_gcp(
         x = multiview.triangulate_gcp(
             point,
             reconstruction.shots,
-            reproj_threshold=0.004,
-            min_ray_angle_degrees=2.0,
         )
-        if x is not None:
+        if x is not None and len(point.lla):
+            point_enu = np.array(
+                reconstruction.reference.to_topocentric(*point.lla_vec)
+            )
+            if not point.has_altitude:
+                point_enu[2] = x[2] = 0.0
             triangulated.append(x)
-            point_enu = reconstruction.reference.to_topocentric(*point.lla_vec)
             measured.append(point_enu)
     return triangulated, measured

@@ -1,32 +1,34 @@
 import logging
 import os
+
 try:
     import resource
 except ModuleNotFoundError:
-    pass # Windows
-import sys
+    pass  # Windows
 import ctypes
+import sys
 from typing import Optional
 
 import cv2
 from joblib import Parallel, delayed, parallel_backend
 
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 abspath = os.path.dirname(os.path.realpath(__file__))
-SENSOR = os.path.join(abspath, "data", "sensor_data.json")
+SENSOR_DATA = os.path.join(abspath, "data", "sensor_data.json")
+CAMERA_CALIBRATION = os.path.join(abspath, "data", "camera_calibration.yaml")
 BOW_PATH = os.path.join(abspath, "data", "bow")
 
 
 # Handle different OpenCV versions
-OPENCV5 = int(cv2.__version__.split(".")[0]) >= 5
-OPENCV4 = int(cv2.__version__.split(".")[0]) >= 4
-OPENCV44 = (
+OPENCV5: bool = int(cv2.__version__.split(".")[0]) >= 5
+OPENCV4: bool = int(cv2.__version__.split(".")[0]) >= 4
+OPENCV44: bool = (
     int(cv2.__version__.split(".")[0]) == 4 and int(cv2.__version__.split(".")[1]) >= 4
 )
-OPENCV3 = int(cv2.__version__.split(".")[0]) >= 3
+OPENCV3: bool = int(cv2.__version__.split(".")[0]) >= 3
 
 if hasattr(cv2, "flann_Index"):
     flann_Index = cv2.flann_Index
@@ -38,7 +40,7 @@ else:
 
 
 # Parallel processes
-def parallel_map(func, args, num_proc, max_batch_size=1):
+def parallel_map(func, args, num_proc: int, max_batch_size: int = 1):
     """Run function for all arguments using multiple processes."""
     # De-activate/Restore any inner OpenCV threading
     threads_used = cv2.getNumThreads()
@@ -61,7 +63,8 @@ def parallel_map(func, args, num_proc, max_batch_size=1):
 
 # Memory usage
 
-if sys.platform == 'win32':
+if sys.platform == "win32":
+
     class MEMORYSTATUSEX(ctypes.Structure):
         _fields_ = [
             ("dwLength", ctypes.c_ulong),
@@ -75,7 +78,7 @@ if sys.platform == 'win32':
             ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
         ]
 
-        def __init__(self):
+        def __init__(self) -> None:
             # have to initialize this to the size of MEMORYSTATUSEX
             self.dwLength = ctypes.sizeof(self)
             super(MEMORYSTATUSEX, self).__init__()
@@ -89,16 +92,17 @@ if sys.platform == 'win32':
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
         return stat.ullAvailPhys / 1024 / 1024
 
-    def current_memory_usage():
+    def current_memory_usage() -> int:
         stat = MEMORYSTATUSEX()
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
         return (stat.ullTotalPhys - stat.ullAvailPhys) / 1024
+
+
 else:
     if sys.platform == "darwin":
         rusage_unit = 1
     else:
         rusage_unit = 1024
-
 
     def memory_available() -> Optional[int]:
         """Available memory in MB.
@@ -112,8 +116,7 @@ else:
         available_mem = int(lines[1].split()[6])
         return available_mem
 
-
-    def current_memory_usage():
+    def current_memory_usage() -> int:
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * rusage_unit
 
 

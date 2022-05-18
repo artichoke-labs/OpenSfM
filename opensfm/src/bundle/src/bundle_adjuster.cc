@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "bundle/data/bias.h"
+
 namespace {
 bool IsRigCameraUseful(bundle::RigCamera &rig_camera) {
   return !(rig_camera.GetParametersToOptimize().empty() &&
@@ -86,10 +88,10 @@ void BundleAdjuster::AddCamera(const std::string &id,
   // identity bias by default
   auto &bias_data =
       bias_
-          .emplace(
-              std::piecewise_construct, std::forward_as_tuple(id),
-              std::forward_as_tuple(
-                  id, geometry::Similarity(Vec3d::Zero(), Vec3d::Zero(), 1.0)))
+          .emplace(std::piecewise_construct, std::forward_as_tuple(id),
+                   std::forward_as_tuple(
+                       id, geometry::Similarity(Vec3d::Zero().eval(),
+                                                Vec3d::Zero().eval(), 1.0)))
           .first->second;
   bias_data.SetParametersToOptimize({});
 }
@@ -100,7 +102,7 @@ void BundleAdjuster::SetCameraBias(const std::string &camera_id,
   if (bias_exists == bias_.end()) {
     throw std::runtime_error("Camera " + camera_id + " doesn't exist.");
   }
-  bias_exists->second = Bias(camera_id, bias);
+  bias_exists->second = Similarity(camera_id, bias);
 }
 
 void BundleAdjuster::AddRigInstance(
@@ -196,15 +198,15 @@ void BundleAdjuster::AddReconstruction(const std::string &id, bool constant) {
   reconstructions_[id] = r;
 }
 
-void BundleAdjuster::AddReconstructionShot(const std::string &reconstruction_id,
-                                           double scale,
-                                           const std::string &shot_id) {
+void BundleAdjuster::AddReconstructionInstance(
+    const std::string &reconstruction_id, double scale,
+    const std::string &instance_id) {
   const auto find = reconstructions_.find(reconstruction_id);
   if (find == reconstructions_.end()) {
     return;
   }
-  find->second.scales[shot_id] = scale;
-  shot_to_reconstruction_[shot_id] = reconstruction_id;
+  find->second.scales[instance_id] = scale;
+  reconstructions_assignments_[instance_id] = reconstruction_id;
 }
 
 void BundleAdjuster::AddPoint(const std::string &id, const Vec3d &position,
@@ -249,10 +251,6 @@ void BundleAdjuster::AddPointProjectionObservation(const std::string &shot,
 
 void BundleAdjuster::AddRelativeMotion(const RelativeMotion &rm) {
   relative_motions_.push_back(rm);
-}
-
-void BundleAdjuster::AddRelativeSimilarity(const RelativeSimilarity &rm) {
-  relative_similarity_.push_back(rm);
 }
 
 void BundleAdjuster::AddRelativeRotation(const RelativeRotation &rr) {
@@ -335,6 +333,13 @@ void BundleAdjuster::AddAbsoluteRoll(const std::string &shot_id, double angle,
   a.angle = angle;
   a.std_deviation = std_deviation;
   absolute_rolls_.push_back(a);
+}
+
+void BundleAdjuster::SetGaugeFixShots(const std::string &shot_origin,
+                                      const std::string &shot_scale) {
+  Shot *shot = &shots_.at(shot_origin);
+  shot->GetRigInstance()->SetParametersToOptimize({});
+  gauge_fix_shots_.SetValue(std::make_pair(shot_origin, shot_scale));
 }
 
 void BundleAdjuster::SetPointProjectionLossFunction(std::string name,
@@ -723,7 +728,7 @@ void BundleAdjuster::Run() {
         new ceres::DynamicAutoDiffCostFunction<PriorType>(position_prior);
     cost_function->SetNumResiduals(3);
     cost_function->AddParameterBlock(Pose::Parameter::NUM_PARAMS);
-    cost_function->AddParameterBlock(Bias::Parameter::NUM_PARAMS);
+    cost_function->AddParameterBlock(Similarity::Parameter::NUM_PARAMS);
     cost_function->AddParameterBlock(1);
     problem.AddResidualBlock(
         cost_function, nullptr, i.second.GetValueData().data(),
@@ -770,84 +775,36 @@ void BundleAdjuster::Run() {
     ceres::LossFunction *relative_motion_loss =
         CreateLossFunction(relative_motion_loss_name_, robust_threshold);
 
-    auto *relative_motion =
-        new RelativeMotionError(rp.parameters, rp.scale_matrix);
+    auto *relative_motion = new RelativeMotionError(
+        rp.parameters, rp.scale_matrix, rp.observed_scale);
     auto *cost_function =
         new ceres::DynamicAutoDiffCostFunction<RelativeMotionError>(
             relative_motion);
     cost_function->AddParameterBlock(6);
     cost_function->AddParameterBlock(6);
     cost_function->AddParameterBlock(1);
-    cost_function->SetNumResiduals(6);
+    cost_function->SetNumResiduals(Similarity::Parameter::NUM_PARAMS);
 
-    auto &shot_i = shots_.at(rp.shot_id_i);
-    auto &shot_j = shots_.at(rp.shot_id_j);
+    auto &rig_instance_i = rig_instances_.at(rp.rig_instance_id_i);
+    auto &rig_instance_j = rig_instances_.at(rp.rig_instance_id_j);
 
-    auto parameter_blocks = std::vector<double *>(
-        {shot_i.GetRigInstance()->GetValueData().data(),
-         shot_j.GetRigInstance()->GetValueData().data(),
-         reconstructions_[rp.reconstruction_id_i].GetScalePtr(rp.shot_id_i)});
+    auto *scale_i =
+        reconstructions_[reconstructions_assignments_.at(rp.rig_instance_id_i)]
+            .GetScalePtr(rp.rig_instance_id_i);
+    auto *scale_j =
+        reconstructions_[reconstructions_assignments_.at(rp.rig_instance_id_j)]
+            .GetScalePtr(rp.rig_instance_id_j);
+    auto parameter_blocks =
+        std::vector<double *>({rig_instance_i.GetValueData().data(),
+                               rig_instance_j.GetValueData().data(), scale_i});
 
-    auto shot_i_rig_camera = shot_i.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot_i.GetRigCamera())) {
-      cost_function->AddParameterBlock(6);
-      relative_motion->shot_i_rig_camera_index_ = parameter_blocks.size();
-      parameter_blocks.push_back(shot_i_rig_camera);
+    if (scale_i != scale_j) {
+      cost_function->AddParameterBlock(1);
+      relative_motion->scale_j_index_ = parameter_blocks.size();
+      parameter_blocks.push_back(scale_j);
     }
 
-    auto shot_j_rig_camera = shot_j.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot_j.GetRigCamera()) &&
-        shot_j_rig_camera != shot_i_rig_camera) {
-      cost_function->AddParameterBlock(6);
-      relative_motion->shot_j_rig_camera_index_ = parameter_blocks.size();
-      parameter_blocks.push_back(shot_j_rig_camera);
-    }
     problem.AddResidualBlock(cost_function, relative_motion_loss,
-                             parameter_blocks);
-  }
-
-  // Add relative similarity errors
-  for (auto &rp : relative_similarity_) {
-    double robust_threshold =
-        relative_motion_loss_threshold_ * rp.robust_multiplier;
-    ceres::LossFunction *relative_similarity_loss =
-        CreateLossFunction(relative_motion_loss_name_, robust_threshold);
-
-    auto *relative_similarity =
-        new RelativeSimilarityError(rp.parameters, rp.scale, rp.scale_matrix);
-    auto *cost_function =
-        new ceres::DynamicAutoDiffCostFunction<RelativeSimilarityError>(
-            relative_similarity);
-    cost_function->AddParameterBlock(6);
-    cost_function->AddParameterBlock(6);
-    cost_function->AddParameterBlock(1);
-    cost_function->AddParameterBlock(1);
-    cost_function->SetNumResiduals(7);
-
-    auto &shot_i = shots_.at(rp.shot_id_i);
-    auto &shot_j = shots_.at(rp.shot_id_j);
-
-    auto parameter_blocks = std::vector<double *>(
-        {shot_i.GetRigInstance()->GetValueData().data(),
-         shot_j.GetRigInstance()->GetValueData().data(),
-         reconstructions_[rp.reconstruction_id_i].GetScalePtr(rp.shot_id_i),
-         reconstructions_[rp.reconstruction_id_j].GetScalePtr(rp.shot_id_j)});
-
-    auto shot_i_rig_camera = shot_i.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot_i.GetRigCamera())) {
-      cost_function->AddParameterBlock(6);
-      relative_similarity->shot_i_rig_camera_index_ = parameter_blocks.size();
-      parameter_blocks.push_back(shot_i_rig_camera);
-    }
-
-    auto shot_j_rig_camera = shot_j.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot_j.GetRigCamera()) &&
-        shot_j_rig_camera != shot_i_rig_camera) {
-      cost_function->AddParameterBlock(6);
-      relative_similarity->shot_j_rig_camera_index_ = parameter_blocks.size();
-      parameter_blocks.push_back(shot_j_rig_camera);
-    }
-    problem.AddResidualBlock(cost_function, relative_similarity_loss,
                              parameter_blocks);
   }
 
@@ -882,18 +839,26 @@ void BundleAdjuster::Run() {
     }
 
     auto shot_j_rig_camera = shot_j.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot_j.GetRigCamera()) &&
-        shot_j_rig_camera != shot_i_rig_camera) {
-      cost_function->AddParameterBlock(6);
-      relative_rotation->shot_j_rig_camera_index_ = parameter_blocks.size();
-      parameter_blocks.push_back(shot_j_rig_camera);
+    if (IsRigCameraUseful(*shot_j.GetRigCamera())) {
+      if (shot_j_rig_camera != shot_i_rig_camera) {
+        cost_function->AddParameterBlock(6);
+        relative_rotation->shot_j_rig_camera_index_ = parameter_blocks.size();
+        parameter_blocks.push_back(shot_j_rig_camera);
+      } else {
+        relative_rotation->shot_j_rig_camera_index_ =
+            relative_rotation->shot_i_rig_camera_index_;
+      }
     }
     problem.AddResidualBlock(cost_function, relative_rotation_loss,
                              parameter_blocks);
   }
 
   // Add common position errors
+  ceres::LossFunction *common_position_loss = nullptr;
   for (auto &c : common_positions_) {
+    if (common_position_loss == nullptr) {
+      common_position_loss = new ceres::TukeyLoss(1);
+    }
     auto *common_position = new CommonPositionError(c.margin, c.std_deviation);
     auto *cost_function =
         new ceres::DynamicAutoDiffCostFunction<CommonPositionError>(
@@ -917,13 +882,18 @@ void BundleAdjuster::Run() {
     }
 
     auto shot_j_rig_camera = shot_j.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot_j.GetRigCamera()) &&
-        shot_j_rig_camera != shot_i_rig_camera) {
-      cost_function->AddParameterBlock(6);
-      common_position->shot_j_rig_camera_index_ = parameter_blocks.size();
-      parameter_blocks.push_back(shot_j_rig_camera);
+    if (IsRigCameraUseful(*shot_j.GetRigCamera())) {
+      if (shot_j_rig_camera != shot_i_rig_camera) {
+        cost_function->AddParameterBlock(6);
+        common_position->shot_j_rig_camera_index_ = parameter_blocks.size();
+        parameter_blocks.push_back(shot_j_rig_camera);
+      } else {
+        common_position->shot_j_rig_camera_index_ =
+            common_position->shot_i_rig_camera_index_;
+      }
     }
-    problem.AddResidualBlock(cost_function, nullptr, parameter_blocks);
+    problem.AddResidualBlock(cost_function, common_position_loss,
+                             parameter_blocks);
   }
 
   // Add heatmap cost
@@ -1041,28 +1011,54 @@ void BundleAdjuster::Run() {
     auto shot0_rig_camera = shot0.GetRigCamera()->GetValueData().data();
     if (IsRigCameraUseful(*shot0.GetRigCamera())) {
       cost_function->AddParameterBlock(6);
-      linear_motion->shot1_rig_camera_index = parameter_blocks.size();
+      linear_motion->shot0_rig_camera_index = parameter_blocks.size();
       parameter_blocks.push_back(shot0_rig_camera);
     }
 
     auto shot1_rig_camera = shot1.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot1.GetRigCamera()) &&
-        shot1_rig_camera != shot0_rig_camera) {
-      cost_function->AddParameterBlock(6);
-      linear_motion->shot1_rig_camera_index = parameter_blocks.size();
-      parameter_blocks.push_back(shot1_rig_camera);
+    if (IsRigCameraUseful(*shot1.GetRigCamera())) {
+      if (shot1_rig_camera != shot0_rig_camera) {
+        cost_function->AddParameterBlock(6);
+        linear_motion->shot1_rig_camera_index = parameter_blocks.size();
+        parameter_blocks.push_back(shot1_rig_camera);
+      } else {
+        linear_motion->shot1_rig_camera_index =
+            linear_motion->shot0_rig_camera_index;
+      }
     }
 
     auto shot2_rig_camera = shot2.GetRigCamera()->GetValueData().data();
-    if (IsRigCameraUseful(*shot2.GetRigCamera()) &&
-        shot2_rig_camera != shot0_rig_camera &&
-        shot2_rig_camera != shot1_rig_camera) {
-      cost_function->AddParameterBlock(6);
-      linear_motion->shot2_rig_camera_index = parameter_blocks.size();
-      parameter_blocks.push_back(shot2_rig_camera);
+    if (IsRigCameraUseful(*shot2.GetRigCamera())) {
+      if (shot2_rig_camera != shot0_rig_camera &&
+          shot2_rig_camera != shot1_rig_camera) {
+        cost_function->AddParameterBlock(6);
+        linear_motion->shot2_rig_camera_index = parameter_blocks.size();
+        parameter_blocks.push_back(shot2_rig_camera);
+      } else {
+        linear_motion->shot2_rig_camera_index =
+            linear_motion->shot0_rig_camera_index;
+      }
     }
     problem.AddResidualBlock(cost_function, linear_motion_prior_loss_,
                              parameter_blocks);
+  }
+
+  // Gauge fix
+  if (gauge_fix_shots_.HasValue()) {
+    const auto &gauge_shots = gauge_fix_shots_.Value();
+    auto instance1 = shots_.at(gauge_shots.first).GetRigInstance();
+    auto instance2 = shots_.at(gauge_shots.second).GetRigInstance();
+    const double norm =
+        (instance1->GetValue().GetOrigin() - instance2->GetValue().GetOrigin())
+            .norm();
+
+    ceres::CostFunction *cost_function =
+        new ceres::AutoDiffCostFunction<TranslationPriorError, 1, 6, 6>(
+            new TranslationPriorError(norm));
+
+    problem.AddResidualBlock(cost_function, nullptr,
+                             instance1->GetValueData().data(),
+                             instance2->GetValueData().data());
   }
 
   // Solve
@@ -1169,6 +1165,14 @@ void BundleAdjuster::ComputeReprojectionErrors() {
   }
 }
 
+int BundleAdjuster::GetProjectionsCount() const {
+  return point_projection_observations_.size();
+}
+
+int BundleAdjuster::GetRelativeMotionsCount() const {
+  return relative_motions_.size();
+}
+
 geometry::Camera BundleAdjuster::GetCamera(const std::string &id) const {
   if (cameras_.find(id) == cameras_.end()) {
     throw std::runtime_error("Camera " + id + " doesn't exists");
@@ -1198,16 +1202,6 @@ Reconstruction BundleAdjuster::GetReconstruction(
                              " doesn't exists");
   }
   return it->second;
-}
-
-Reconstruction BundleAdjuster::GetShotReconstruction(
-    const std::string &shot_id) const {
-  const auto it = shot_to_reconstruction_.find(shot_id);
-  if (it == shot_to_reconstruction_.end()) {
-    throw std::runtime_error("Shot " + shot_id +
-                             " doesn't belong to a reconstruction");
-  }
-  return reconstructions_.at(it->second);
 }
 
 RigCamera BundleAdjuster::GetRigCamera(const std::string &rig_camera_id) const {

@@ -2,20 +2,19 @@ import collections
 import logging
 import os
 import shelve
-from typing import Optional, Dict, Any, List, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 from opensfm import tracking, features as oft, types, pymap, pygeometry, io, geo
 from opensfm.dataset import DataSet
 
-
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class SyntheticFeatures(collections.abc.MutableMapping):
     database: Union[Dict[str, oft.FeaturesData], shelve.Shelf]
 
-    def __init__(self, on_disk_filename: Optional[str]):
+    def __init__(self, on_disk_filename: Optional[str]) -> None:
         if on_disk_filename:
             self.database = shelve.open(on_disk_filename, flag="n")
         else:
@@ -24,25 +23,26 @@ class SyntheticFeatures(collections.abc.MutableMapping):
         for m in ["keys", "items", "values", "get"]:
             setattr(self, m, getattr(self.database, m))
 
-    def sync(self):
-        if type(self.database) is dict:
+    def sync(self) -> None:
+        database = self.database
+        if type(database) is dict:
             return
         else:
-            self.database.sync()
+            database.sync()
 
-    def __getitem__(self, key):
+    def __getitem__(self, key) -> oft.FeaturesData:
         return self.database.__getitem__(key)
 
-    def __setitem__(self, key, item):
+    def __setitem__(self, key, item) -> None:
         return self.database.__setitem__(key, item)
 
-    def __delitem__(self, key):
+    def __delitem__(self, key) -> None:
         return self.database.__delitem__(key)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return self.database.__iter__()
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.database.__len__()
 
 
@@ -61,7 +61,7 @@ class SyntheticDataSet(DataSet):
         tracks_manager: Optional[pymap.TracksManager] = None,
         gcps: Optional[Dict[str, pymap.GroundControlPoint]] = None,
         output_path: Optional[str] = None,
-    ):
+    ) -> None:
         data_path = "" if not output_path else output_path
         if data_path:
             io.mkdir_p(data_path)
@@ -80,6 +80,10 @@ class SyntheticDataSet(DataSet):
 
     def images(self) -> List[str]:
         return self.image_list
+
+    def _raise_if_absent_image(self, image: str):
+        if image not in self.image_list:
+            raise RuntimeError("Image isn't present in the synthetic dataset")
 
     def load_camera_models(self) -> Dict[str, pygeometry.Camera]:
         return self.reconstruction.cameras
@@ -100,12 +104,15 @@ class SyntheticDataSet(DataSet):
         return rig_assignments
 
     def load_exif(self, image: str) -> Dict[str, Any]:
+        self._raise_if_absent_image(image)
         return self.exifs[image]
 
     def exif_exists(self, image: str) -> bool:
-        return True
+        return image in self.image_list
 
     def features_exist(self, image: str) -> bool:
+        if image not in self.image_list:
+            return False
         if self.features is None:
             return False
         feat = self.features
@@ -114,10 +121,12 @@ class SyntheticDataSet(DataSet):
         return image in feat
 
     def load_words(self, image: str):
+        self._raise_if_absent_image(image)
         n_closest = 50
         return [image] * n_closest
 
     def load_features(self, image: str) -> Optional[oft.FeaturesData]:
+        self._raise_if_absent_image(image)
         if not self.features:
             return None
         feat = self.features
@@ -125,38 +134,45 @@ class SyntheticDataSet(DataSet):
             return None
         return feat[image]
 
-    def save_features(self, image: str, features_data: oft.FeaturesData):
+    def save_features(self, image: str, features_data: oft.FeaturesData) -> None:
         pass
 
     def matches_exists(self, image: str) -> bool:
+        if image not in self.image_list:
+            return False
         self._check_and_create_matches()
         if self.matches is None:
             return False
         return True
 
     def load_matches(self, image: str) -> Dict[str, np.ndarray]:
+        self._raise_if_absent_image(image)
         self._check_and_create_matches()
         if self.matches is not None:
             return self.matches[image]
         else:
             return {}
 
-    def _check_and_create_matches(self):
+    def load_image_list(self) -> None:
+        pass
+
+    def _check_and_create_matches(self) -> None:
         if self.matches is None:
             self.matches = self._construct_matches()
 
-    def _construct_matches(self):
+    def _construct_matches(self) -> Dict[str, Any]:
         matches = {}
+        tracks_manager = self.load_tracks_manager()
         for im1 in self.images():
             for im2 in self.images():
                 if im1 == im2:
                     continue
                 image_matches = matches.setdefault(im1, {})
-                tracks = tracking.common_tracks(self.tracks_manager, im1, im2)[0]
+                tracks = tracking.common_tracks(tracks_manager, im1, im2)[0]
                 if len(tracks) > 10:
                     pair_matches = []
                     for t in tracks:
-                        observations = self.tracks_manager.get_track_observations(t)
+                        observations = tracks_manager.get_track_observations(t)
                         pair_matches.append(
                             np.array([observations[im1].id, observations[im2].id])
                         )

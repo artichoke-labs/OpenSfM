@@ -21,7 +21,7 @@ from opensfm import (
 from opensfm.dataset_base import DataSetBase
 from PIL.PngImagePlugin import PngImageFile
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class DataSet(DataSetBase):
@@ -69,12 +69,17 @@ class DataSet(DataSetBase):
     def load_image_list(self) -> None:
         """Load image list from image_list.txt or list images/ folder."""
         image_list_file = self._image_list_file()
+        image_list_path = os.path.join(self.data_path, "images")
+
         if self.io_handler.isfile(image_list_file):
             with self.io_handler.open_rt(image_list_file) as fin:
                 lines = fin.read().splitlines()
             self._set_image_list(lines)
         else:
-            self._set_image_path(os.path.join(self.data_path, "images"))
+            self._set_image_path(image_list_path)
+
+        if self.data_path and not self.image_list:
+            raise IOError("No Images found in {}".format(image_list_path))
 
     def images(self) -> List[str]:
         """List of file names of all images in the dataset."""
@@ -342,8 +347,28 @@ class DataSet(DataSetBase):
         return self.io_handler.isfile(self._matches_file(image))
 
     def load_matches(self, image: str) -> Dict[str, np.ndarray]:
+        # Prevent pickling of anything except what we strictly need
+        # as 'pickle.load' is RCE-prone. Will raise on any class other
+        # than the numpy ones we allow.
+        class MatchingUnpickler(pickle.Unpickler):
+            modules_map = {
+                "numpy.core.multiarray._reconstruct": np.core.multiarray,
+                "numpy.core.multiarray.scalar": np.core.multiarray,
+                "numpy.ndarray": np,
+                "numpy.dtype": np,
+            }
+
+            def find_class(self, module, name):
+                classname = f"{module}.{name}"
+                allowed_module = classname in self.modules_map
+                if not allowed_module:
+                    raise pickle.UnpicklingError(
+                        "global '%s.%s' is forbidden" % (module, name)
+                    )
+                return getattr(self.modules_map[classname], name)
+
         with self.io_handler.open(self._matches_file(image), "rb") as fin:
-            matches = pickle.load(BytesIO(gzip.decompress(fin.read())))
+            matches = MatchingUnpickler(BytesIO(gzip.decompress(fin.read()))).load()
         return matches
 
     def save_matches(self, image: str, matches: Dict[str, np.ndarray]) -> None:
@@ -492,6 +517,11 @@ class DataSet(DataSetBase):
         with self.io_handler.open_rt(self._exif_overrides_file()) as fin:
             return json.load(fin)
 
+    def save_exif_overrides(self, exif_overrides: Dict[str, Any]) -> None:
+        """Load EXIF overrides data."""
+        with self.io_handler.open_wt(self._exif_overrides_file()) as fout:
+            io.json_dump(exif_overrides, fout)
+
     def _rig_cameras_file(self) -> str:
         """Return path of rig models file"""
         return os.path.join(self.data_path, "rig_cameras.json")
@@ -618,8 +648,10 @@ class DataSet(DataSetBase):
         """Create a subset of this dataset by symlinking input data."""
         subset_dataset_path = os.path.join(self.data_path, name)
         self.io_handler.mkdir_p(subset_dataset_path)
-        self.io_handler.mkdir_p(os.path.join(subset_dataset_path, "images"))
-        self.io_handler.mkdir_p(os.path.join(subset_dataset_path, "segmentations"))
+
+        folders = ["images", "segmentations", "masks"]
+        for folder in folders:
+            self.io_handler.mkdir_p(os.path.join(subset_dataset_path, folder))
         subset_dataset = DataSet(subset_dataset_path, self.io_handler)
 
         files = []
@@ -648,6 +680,13 @@ class DataSet(DataSetBase):
                     os.path.join(subset_dataset_path, "segmentations", image + ".png"),
                 )
             )
+            if image in self.mask_files:
+                files.append(
+                    (
+                        self.mask_files[image],
+                        os.path.join(subset_dataset_path, "masks", image + ".png"),
+                    )
+                )
 
         for src, dst in files:
             if not self.io_handler.exists(src):
@@ -964,14 +1003,15 @@ def invent_reference_from_gps_and_gcp(
 
     if not wlat and not wlon:
         for gcp in data.load_ground_control_points():
-            lat += gcp.lla["latitude"]
-            lon += gcp.lla["longitude"]
-            wlat += 1
-            wlon += 1
+            if gcp.lla:
+                lat += gcp.lla["latitude"]
+                lon += gcp.lla["longitude"]
+                wlat += 1
+                wlon += 1
 
-            if gcp.has_altitude:
-                alt += gcp.lla["altitude"]
-                walt += 1
+                if gcp.has_altitude:
+                    alt += gcp.lla["altitude"]
+                    walt += 1
 
     if wlat:
         lat /= wlat

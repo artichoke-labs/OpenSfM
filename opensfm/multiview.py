@@ -200,19 +200,19 @@ class TestLinearKernel:
 
     required_samples = 1
 
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+    def __init__(self, x: np.ndarray, y: np.ndarray) -> None:
+        self.x: np.ndarray = x
+        self.y: np.ndarray = y
 
-    def num_samples(self):
+    def num_samples(self) -> int:
         return len(self.x)
 
-    def fit(self, samples):
+    def fit(self, samples: np.ndarray) -> List[float]:
         x = self.x[samples[0]]
         y = self.y[samples[0]]
         return [y / x]
 
-    def evaluate(self, model):
+    def evaluate(self, model: np.ndarray) -> np.ndarray:
         return self.y - model * self.x
 
 
@@ -223,7 +223,7 @@ class PlaneKernel:
 
     def __init__(
         self, points, vectors, verticals, point_threshold=1.0, vector_threshold=5.0
-    ):
+    ) -> None:
         self.points = points
         self.vectors = vectors
         self.verticals = verticals
@@ -231,10 +231,10 @@ class PlaneKernel:
         self.point_threshold = point_threshold
         self.vector_threshold = vector_threshold
 
-    def num_samples(self):
+    def num_samples(self) -> int:
         return len(self.points)
 
-    def sampling(self):
+    def sampling(self) -> Dict[str, Any]:
         samples = {}
         if len(self.vectors) > 0:
             samples["points"] = self.points[
@@ -250,11 +250,11 @@ class PlaneKernel:
             samples["vectors"] = None
         return samples
 
-    def fit(self, samples):
+    def fit(self, samples: Dict[str, np.ndarray]) -> List[np.ndarray]:
         model = fit_plane(samples["points"], samples["vectors"], self.verticals)
         return [model]
 
-    def evaluate(self, model):
+    def evaluate(self, model) -> np.ndarray:
         # only evaluate on points
         normal = model[0:3]
         normal_norm = np.linalg.norm(normal) + 1e-10
@@ -489,7 +489,7 @@ def camera_compass_angle(rotation_matrix: np.ndarray) -> float:
 
 
 def rotation_matrix_from_up_vector_and_compass(
-    up_vector: np.ndarray, compass_angle: float
+    up_vector: List[float], compass_angle: float
 ) -> np.ndarray:
     """Camera rotation given up_vector and compass.
 
@@ -682,8 +682,8 @@ def relative_pose_optimize_nonlinear(
 def triangulate_gcp(
     point: pymap.GroundControlPoint,
     shots: Dict[str, pymap.Shot],
-    reproj_threshold: float,
-    min_ray_angle_degrees: float,
+    reproj_threshold: float = 0.02,
+    min_ray_angle_degrees: float = 1.0,
 ) -> Optional[np.ndarray]:
     """Compute the reconstructed position of a GCP from observations."""
 
@@ -702,7 +702,10 @@ def triangulate_gcp(
     if len(os) >= 2:
         thresholds = len(os) * [reproj_threshold]
         valid_triangulation, X = pygeometry.triangulate_bearings_midpoint(
-            np.asarray(os), np.asarray(bs), thresholds, np.radians(min_ray_angle_degrees)
+            np.asarray(os),
+            np.asarray(bs),
+            thresholds,
+            np.radians(min_ray_angle_degrees),
         )
         if valid_triangulation:
             return X

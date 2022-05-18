@@ -1,6 +1,7 @@
 import datetime
 import os
 from subprocess import Popen, PIPE
+from typing import List
 
 import cv2
 import dateutil.parser
@@ -9,8 +10,9 @@ from opensfm import geotag_from_gpx
 from opensfm import io
 
 
-def video_orientation(video_file):
+def video_orientation(video_file) -> int:
     # Rotation
+    # pyre-fixme[16]: Optional type has no attribute `read`.
     rotation = Popen(
         ["exiftool", "-Rotation", "-b", video_file], stdout=PIPE
     ).stdout.read()
@@ -24,6 +26,8 @@ def video_orientation(video_file):
             orientation = 3
         elif rotation == 270:
             orientation = 8
+        else:
+            raise RuntimeError(f"rotation {rotation} has no valid orientation!")
     else:
         orientation = 1
     return orientation
@@ -32,13 +36,13 @@ def video_orientation(video_file):
 def import_video_with_gpx(
     video_file,
     gpx_file,
-    output_path,
-    dx,
+    output_path: str,
+    dx: float,
     dt=None,
     start_time=None,
-    visual=False,
+    visual: bool = False,
     image_description=None,
-):
+) -> List[str]:
 
     points = geotag_from_gpx.get_lat_lon_time(gpx_file)
 
@@ -48,6 +52,7 @@ def import_video_with_gpx(
         video_start_time = dateutil.parser.parse(start_time)
     else:
         try:
+            # pyre-fixme[16]: Optional type has no attribute `read`.
             exifdate = Popen(
                 ["exiftool", "-CreateDate", "-b", video_file], stdout=PIPE
             ).stdout.read()
@@ -55,17 +60,6 @@ def import_video_with_gpx(
         except Exception:
             print("Video recording timestamp not found. Using first GPS point time.")
             video_start_time = points[0][0]
-        try:
-            duration = Popen(
-                ["exiftool", "-MediaDuration", "-b", video_file], stdout=PIPE
-            ).stdout.read()
-            video_duration = float(duration)
-            video_end_time = video_start_time + datetime.timedelta(
-                seconds=video_duration
-            )
-        except Exception:
-            print("Video end time not found. Using last GPS point time.")
-            video_end_time = points[-1][0]
 
     print("GPS track starts at: {}".format(points[0][0]))
     print("Video starts at: {}".format(video_start_time))

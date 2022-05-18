@@ -10,7 +10,7 @@ import scipy.spatial as spatial
 from opensfm import bow, context, feature_loader, vlad, geo, geometry
 from opensfm.dataset_base import DataSetBase
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def has_gps_info(exif: Dict[str, Any]) -> bool:
@@ -96,7 +96,7 @@ def find_best_altitude(
     extrema = -coeffs[1] / (2 * coeffs[0])
     if extrema < 0:
         logger.info(
-            f"Altiude is negative ({extrema}) : viewing directions are probably divergent. Using default altide of {DEFAULT_Z}"
+            f"Altitude is negative ({extrema}) : viewing directions are probably divergent. Using default altitude of {DEFAULT_Z}"
         )
         extrema = DEFAULT_Z
     return extrema
@@ -105,7 +105,7 @@ def find_best_altitude(
 def get_representative_points(
     images: List[str], exifs: Dict[str, Any], reference: geo.TopocentricConverter
 ) -> Dict[str, np.ndarray]:
-    """Return a topiocentric point for each image, that is suited to run distance-based pair selection."""
+    """Return a topocentric point for each image, that is suited to run distance-based pair selection."""
     origin = {}
     directions = {}
 
@@ -209,7 +209,7 @@ def match_candidates_by_distance(
     return pairs
 
 
-def norm_2d(vec: np.ndarray):
+def norm_2d(vec: np.ndarray) -> float:
     """Return the 2D norm of a vector."""
     return math.sqrt(vec[0] ** 2 + vec[1] ** 2)
 
@@ -220,7 +220,7 @@ def match_candidates_by_graph(
     exifs: Dict[str, Any],
     reference: geo.TopocentricConverter,
     rounds: int,
-):
+) -> Set[Tuple[str, str]]:
     """Find by triangulating the GPS points on X/Y axises"""
     if len(images_cand) == 0 or rounds < 1:
         return set()
@@ -796,7 +796,6 @@ def ordered_pairs(
         while next_image:
             im1 = next_image
             next_image = None
-
             for im2 in per_image[im1]:
                 if (im2, im1) not in ordered:
                     ordered.add((im1, im2))
@@ -806,5 +805,4 @@ def ordered_pairs(
 
             if not next_image and remaining:
                 next_image = remaining.pop()
-
     return list(ordered)

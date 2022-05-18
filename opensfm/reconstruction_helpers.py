@@ -1,9 +1,10 @@
 import logging
 import math
-from typing import Dict, Any, Iterable
+from typing import Optional, List, Dict, Any, Iterable
 
 import numpy as np
 from opensfm import (
+    geo,
     multiview,
     pygeometry,
     pymap,
@@ -15,10 +16,10 @@ from opensfm import (
 from opensfm.dataset_base import DataSetBase
 
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def guess_acceleration_from_orientation_tag(orientation):
+def guess_acceleration_from_orientation_tag(orientation: int) -> List[float]:
     """Guess upward vector in camera coordinates given the orientation tag.
 
     Assumes camera is looking towards the horizon and horizon is horizontal
@@ -41,10 +42,10 @@ def guess_acceleration_from_orientation_tag(orientation):
         return [1, 0, 0]
     if orientation == 8:
         return [1, 0, 0]
-    logger.error("Unknown orientation tag: {}".format(orientation))
+    raise RuntimeError(f"Error: Unknown orientation tag: {orientation}")
 
 
-def orientation_from_acceleration_in_image_axis(x, y, z):
+def orientation_from_acceleration_in_image_axis(x: float, y: float) -> int:
     """Return the orientation tag corresponding to an acceleration"""
     if y <= -(np.fabs(x)):
         return 1
@@ -54,9 +55,13 @@ def orientation_from_acceleration_in_image_axis(x, y, z):
         return 6
     elif x >= np.fabs(y):
         return 8
+    else:
+        raise RuntimeError(f"Error: Invalid acceleration {x}, {y}!")
 
 
-def transform_acceleration_from_phone_to_image_axis(x, y, z, orientation):
+def transform_acceleration_from_phone_to_image_axis(
+    x: float, y: float, z: float, orientation: int
+) -> List[float]:
     """Compute acceleration in image axis.
 
     Orientation tag is used to ensure that the resulting acceleration points
@@ -75,7 +80,7 @@ def transform_acceleration_from_phone_to_image_axis(x, y, z, orientation):
         ix, iy, iz = -y, -x, -z
 
     for _ in range(4):
-        if orientation == orientation_from_acceleration_in_image_axis(ix, iy, iz):
+        if orientation == orientation_from_acceleration_in_image_axis(ix, iy):
             break
         else:
             ix, iy = -iy, ix
@@ -83,8 +88,11 @@ def transform_acceleration_from_phone_to_image_axis(x, y, z, orientation):
     return [ix, iy, iz]
 
 
-def shot_acceleration_in_image_axis(shot):
+def shot_acceleration_in_image_axis(shot: pymap.Shot) -> Optional[List[float]]:
     """Get or guess shot's acceleration."""
+    if not shot.metadata.orientation.has_value:
+        return None
+
     orientation = shot.metadata.orientation.value
     if not 1 <= orientation <= 8:
         logger.error(
@@ -99,15 +107,17 @@ def shot_acceleration_in_image_axis(shot):
     return guess_acceleration_from_orientation_tag(orientation)
 
 
-def rotation_from_shot_metadata(shot):
+def rotation_from_shot_metadata(shot: pymap.Shot) -> Optional[np.ndarray]:
     rotation = rotation_from_angles(shot)
     if rotation is None:
         rotation = rotation_from_orientation_compass(shot)
     return rotation
 
 
-def rotation_from_orientation_compass(shot):
+def rotation_from_orientation_compass(shot: pymap.Shot) -> Optional[np.ndarray]:
     up_vector = shot_acceleration_in_image_axis(shot)
+    if up_vector is None:
+        return None
     if shot.metadata.compass_angle.has_value:
         angle = shot.metadata.compass_angle.value
     else:
@@ -115,7 +125,7 @@ def rotation_from_orientation_compass(shot):
     return multiview.rotation_matrix_from_up_vector_and_compass(up_vector, angle)
 
 
-def rotation_from_angles(shot):
+def rotation_from_angles(shot: pymap.Shot) -> Optional[np.ndarray]:
     if not shot.metadata.opk_angles.has_value:
         return None
     opk_degrees = shot.metadata.opk_angles.value
@@ -123,7 +133,9 @@ def rotation_from_angles(shot):
     return geometry.rotation_from_opk(*opk_rad)
 
 
-def reconstruction_from_metadata(data: DataSetBase, images: Iterable[str]):
+def reconstruction_from_metadata(
+    data: DataSetBase, images: Iterable[str]
+) -> types.Reconstruction:
     """Initialize a reconstruction by using EXIF data for constructing shot poses and cameras."""
     data.init_reference()
     rig_assignments = rig.rig_assignments_per_image(data.load_rig_assignments())
@@ -156,7 +168,9 @@ def reconstruction_from_metadata(data: DataSetBase, images: Iterable[str]):
             continue
         gps_pos = shot.metadata.gps_position.value
 
-        shot.pose.set_rotation_matrix(rotation_from_shot_metadata(shot))
+        rotation = rotation_from_shot_metadata(shot)
+        if rotation is not None:
+            shot.pose.set_rotation_matrix(rotation)
         shot.pose.set_origin(gps_pos)
         shot.scale = 1.0
     return reconstruction
@@ -180,9 +194,6 @@ def exif_to_metadata(
         metadata.gps_accuracy.value = gps.get("dop", 15.0)
         if metadata.gps_accuracy.value == 0.0:
             metadata.gps_accuracy.value = 15.0
-    else:
-        metadata.gps_position.value = np.array([0.0, 0.0, 0.0])
-        metadata.gps_accuracy.value = 999999.0
 
     opk = exif.get("opk")
     if opk and "omega" in opk and "phi" in opk and "kappa" in opk:
