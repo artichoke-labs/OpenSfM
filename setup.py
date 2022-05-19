@@ -5,8 +5,8 @@ import os
 import subprocess
 import sys
 
-
 import setuptools
+from setuptools.command.install import install
 from sphinx.setup_command import BuildDoc
 from wheel.bdist_wheel import bdist_wheel
 
@@ -23,6 +23,11 @@ class platform_bdist_wheel(bdist_wheel):
     def finalize_options(self):
         bdist_wheel.finalize_options(self)
         self.root_is_pure = False
+
+class InstallPlatlib(install):
+    def finalize_options(self):
+        install.finalize_options(self)
+        self.install_lib = self.install_platlib
 
 
 def configure_c_extension():
@@ -78,8 +83,28 @@ setuptools.setup(
     license="BSD",
     packages=setuptools.find_packages(),
     scripts=[
+        "bin/import_colmap.py",
+        "bin/opensfm.bat",
+        "bin/plot_features",
+        "bin/plot_tracks",
+        "bin/create_calibrtion_pattern",
+        "bin/import_video",
+        "bin/opensfm_main.py",
+        "bin/plot_gcp.py",
+        "bin/run_bundler",
+        "bin/export_geojson",
+        "bin/iterative_self_calibration",
         "bin/opensfm_run_all",
+        "bin/plot_inliers",
+        "bin/update_geotag",
+        "bin/export_gps",
+        "bin/migrate_undistort.sh",
+        "bin/opensfm_run_all.bat",
+        "bin/plot_matches.py",
+        "bin/import_bundler",
         "bin/opensfm",
+        "bin/plot_depthmaps",
+        "bin/plot_submodels_gps",
     ],
     package_data={
         "opensfm": [
@@ -101,6 +126,7 @@ setuptools.setup(
     cmdclass={
         "bdist_wheel": platform_bdist_wheel,
         "build_doc": BuildDoc,
+        "install": InstallPlatlib,
     },
     command_options={
         "build_doc": {
