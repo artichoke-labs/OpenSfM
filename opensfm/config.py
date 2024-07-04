@@ -1,3 +1,4 @@
+# pyre-unsafe
 import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, IO, Union
@@ -11,7 +12,7 @@ class OpenSfMConfig:
     # Params for metadata
     ##################################
     use_exif_size: bool = True
-    # Treat images from unknown camera models as comming from different cameras
+    # Treat images from unknown camera models as coming from different cameras
     unknown_camera_models_are_different: bool = False
     default_focal_prior: float = 0.85
 
@@ -41,6 +42,12 @@ class OpenSfMConfig:
     sift_peak_threshold: float = 0.1
     # See OpenCV doc
     sift_edge_threshold: int = 10
+    # See OpenCV doc
+    sift_nfeatures: int = 0
+    # See OpenCV doc
+    sift_octave_layers: int = 3
+    # See OpenCV doc
+    sift_sigma: float = 1.6
 
     ##################################
     # Params for SURF
@@ -84,7 +91,7 @@ class OpenSfMConfig:
     lowes_ratio: float = 0.8
     # FLANN, BRUTEFORCE, or WORDS
     matcher_type: str = "FLANN"
-    # Match symmetricly or one-way
+    # Match symmetrically or one-way
     symmetric_matching: bool = True
 
     ##################################
@@ -281,7 +288,7 @@ class OpenSfMConfig:
     # Params for GPS alignment
     ##################################
     # Use or ignore EXIF altitude tag
-    use_altitude_tag: bool = False
+    use_altitude_tag: bool = True
     # orientation_prior or naive
     align_method: str = "auto"
     # horizontal, vertical or no_roll

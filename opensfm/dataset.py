@@ -1,3 +1,4 @@
+# pyre-unsafe
 import gzip
 import json
 import logging
@@ -702,7 +703,7 @@ class DataSet(DataSetBase):
         )
 
 
-class UndistortedDataSet(object):
+class UndistortedDataSet:
     """Accessors to the undistorted data of a dataset.
 
     Data include undistorted images, masks, and segmentation as well
@@ -985,8 +986,12 @@ class UndistortedDataSet(object):
 def invent_reference_from_gps_and_gcp(
     data: DataSetBase, images: Optional[List[str]] = None
 ) -> geo.TopocentricConverter:
-    lat, lon, alt = 0.0, 0.0, 0.0
-    wlat, wlon, walt = 0.0, 0.0, 0.0
+    """ Invent the reference from the weighted average of lat/lon measurements.
+    Most of the time the altitude provided in the metadata is inaccurate, thus
+    the reference altitude is set equal to 0 regardless of the altitude measurements.
+    """
+    lat, lon = 0.0, 0.0
+    wlat, wlon = 0.0, 0.0
     if images is None:
         images = data.images()
     for image in images:
@@ -997,27 +1002,18 @@ def invent_reference_from_gps_and_gcp(
             lon += w * d["gps"]["longitude"]
             wlat += w
             wlon += w
-            if "altitude" in d["gps"]:
-                alt += w * d["gps"]["altitude"]
-                walt += w
 
     if not wlat and not wlon:
         for gcp in data.load_ground_control_points():
             if gcp.lla:
                 lat += gcp.lla["latitude"]
                 lon += gcp.lla["longitude"]
-                wlat += 1
-                wlon += 1
-
-                if gcp.has_altitude:
-                    alt += gcp.lla["altitude"]
-                    walt += 1
+                wlat += 1.0
+                wlon += 1.0
 
     if wlat:
         lat /= wlat
     if wlon:
         lon /= wlon
-    if walt:
-        alt /= walt
 
-    return geo.TopocentricConverter(lat, lon, 0)  # Set altitude manually.
+    return geo.TopocentricConverter(lat, lon, 0)

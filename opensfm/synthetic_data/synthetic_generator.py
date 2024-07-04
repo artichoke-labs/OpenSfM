@@ -1,8 +1,9 @@
+# pyre-unsafe
 import logging
 import math
 import time
 from collections import defaultdict
-from typing import Callable, Tuple, List, Dict, Any, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -10,13 +11,13 @@ import opensfm.synthetic_data.synthetic_dataset as sd
 import scipy.signal as signal
 import scipy.spatial as spatial
 from opensfm import (
+    features as oft,
     geo,
+    geometry,
     pygeometry,
+    pymap,
     reconstruction as rc,
     types,
-    pymap,
-    features as oft,
-    geometry,
 )
 from opensfm.types import Reconstruction
 
@@ -151,7 +152,7 @@ def generate_causal_noise(
     dims = [np.arange(-scale, scale) for _ in range(dimensions)]
     mesh = np.meshgrid(*dims)
     dist = np.linalg.norm(mesh, axis=0)
-    filter_kernel = np.exp(-(dist ** 2) / (2 * scale))
+    filter_kernel = np.exp(-(dist**2) / (2 * scale))
 
     noise = np.random.randn(dimensions, n) * sigma
     return signal.fftconvolve(noise, filter_kernel, mode="same")
@@ -165,10 +166,6 @@ def generate_exifs(
     causal_gps_noise: bool = False,
 ) -> Dict[str, Any]:
     """Generate fake exif metadata from the reconstruction."""
-    speed_ms = 10.0
-    previous_pose = None
-    previous_time = 0
-    exifs = {}
 
     def _gps_dop(shot: pymap.Shot) -> float:
         gps_dop = 15.0
@@ -178,6 +175,7 @@ def generate_exifs(
             gps_dop = gps_noise[shot.camera.id]
         return gps_dop
 
+    exifs = {}
     per_sequence = defaultdict(list)
     for shot_name in sorted(reconstruction.shots.keys()):
         shot = reconstruction.shots[shot_name]
@@ -193,13 +191,20 @@ def generate_exifs(
         if shot.camera.projection_type in ["perspective", "fisheye"]:
             exif["focal_ratio"] = shot.camera.focal
 
-        pose = shot.pose.get_origin()
+        exifs[shot_name] = exif
+
+    speed_ms = 10.0
+    previous_pose = None
+    previous_time = 0
+    for rig_instance in sorted(
+        reconstruction.rig_instances.values(), key=lambda x: x.id
+    ):
+        pose = rig_instance.pose.get_origin()
         if previous_pose is not None:
             previous_time += np.linalg.norm(pose - previous_pose) / speed_ms
         previous_pose = pose
-        exif["capture_time"] = previous_time
-
-        exifs[shot_name] = exif
+        for shot_id in rig_instance.shots:
+            exifs[shot_id]["capture_time"] = previous_time
 
     for sequence_images in per_sequence.values():
         if causal_gps_noise:
@@ -323,8 +328,14 @@ def create_reconstruction(
         s_cameras,
     ) in enumerate(zip(rig_shots, rig_positions, rig_rotations, rig_cameras, cameras)):
         add_shots_to_reconstruction(
+            # pyre-fixme[6]: For 1st argument expected `List[List[str]]` but got
+            #  `List[List[Tuple[str, str]]]`.
             s_rig_shots,
+            # pyre-fixme[6]: For 2nd argument expected `List[ndarray]` but got
+            #  `ndarray`.
             s_rig_positions,
+            # pyre-fixme[6]: For 3rd argument expected `List[ndarray]` but got
+            #  `ndarray`.
             s_rig_rotations,
             s_rig_cameras,
             s_cameras,
@@ -459,6 +470,7 @@ def generate_track_data(
             point = reconstruction.points[gcp_id]
             gcp = pymap.GroundControlPoint()
             gcp.id = f"gcp-{gcp_id}"
+            gcp.survey_point_id = int(gcp_id)
             enu = point.coordinates + gcp_shift + sigmas_gcp[i]
             lat, lon, alt = reconstruction.reference.to_lla(*enu)
             gcp.lla = {"latitude": lat, "longitude": lon, "altitude": alt}
@@ -467,6 +479,7 @@ def generate_track_data(
                 o = pymap.GroundControlPointObservation()
                 o.shot_id = shot_id
                 o.projection = obs.point
+                o.uid = obs.id
                 gcp.add_observation(o)
             gcps[gcp.id] = gcp
 

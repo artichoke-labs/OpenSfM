@@ -2,8 +2,13 @@
 # Do not manually edit
 # To regenerate:
 #   $ buck run //mapillary/opensfm/opensfm/src/dense:pydense_stubgen
-# Use proper mode, e.g. @arvr/mode/linux/dev for arvr
 # @generated
+#
+# Tip: Be sure to run this with the build mode you use for your project, e.g.,
+# @//arvr/mode/linux/opt (or dev) in arvr.
+#
+# Ignore errors for [5] global variable types and [24] untyped generics.
+# pyre-ignore-all-errors[5,24]
 
 import numpy
 from typing import *
@@ -38,5 +43,5 @@ class OpenMVSExporter:
     def __init__(self) -> None: ...
     def add_camera(self, arg0: str, arg1: numpy.ndarray, arg2: int, arg3: int) -> None: ...
     def add_point(self, arg0: numpy.ndarray, arg1: list) -> None: ...
-    def add_shot(self, arg0: str, arg1: str, arg2: str, arg3: numpy.ndarray, arg4: numpy.ndarray) -> None: ...
+    def add_shot(self, arg0: str, arg1: str, arg2: str, arg3: str, arg4: numpy.ndarray, arg5: numpy.ndarray) -> None: ...
     def export(self, arg0: str) -> None: ...

@@ -18,7 +18,7 @@ bool IsRigCameraUseful(bundle::RigCamera &rig_camera) {
   return !(rig_camera.GetParametersToOptimize().empty() &&
            rig_camera.GetValueData().isConstant(0.));
 }
-};  // namespace
+}  // namespace
 
 namespace bundle {
 BundleAdjuster::BundleAdjuster() {
@@ -140,7 +140,7 @@ void BundleAdjuster::AddRigInstance(
                                          &rig_camera_exists->second,
                                          &rig_instances_.at(rig_instance_id)));
   }
-};
+}
 
 void BundleAdjuster::AddRigCamera(const std::string &rig_camera_id,
                                   const geometry::Pose &pose,
@@ -161,7 +161,7 @@ void BundleAdjuster::AddRigCamera(const std::string &rig_camera_id,
   if (fixed) {
     rig_camera.SetParametersToOptimize({});
   }
-};
+}
 
 void BundleAdjuster::AddRigInstancePositionPrior(
     const std::string &instance_id, const Vec3d &position,
@@ -424,7 +424,7 @@ ceres::LossFunction *CreateLossFunction(std::string name, double threshold) {
   } else if (name.compare("ArctanLoss") == 0) {
     return new ceres::ArctanLoss(threshold);
   }
-  return NULL;
+  return nullptr;
 }
 
 void BundleAdjuster::AddLinearMotion(const std::string &shot0_id,
@@ -469,18 +469,21 @@ struct AddProjectionError {
     constexpr static int CameraSize = T::Size;
     constexpr static int ShotSize = 6;
 
+    const bool is_rig_camera_useful =
+        IsRigCameraUseful(*obs.shot->GetRigCamera());
     ceres::CostFunction *cost_function = nullptr;
     if (use_analytical) {
       using ErrorType = typename ErrorTraitsAnalytic<T, CameraSize>::Type;
       cost_function = new ErrorType(obs.camera->GetValue().GetProjectionType(),
-                                    obs.coordinates, obs.std_deviation);
+                                    obs.coordinates, obs.std_deviation,
+                                    is_rig_camera_useful);
     } else {
       using ErrorType = typename ErrorTraits<T>::Type;
       cost_function =
           new ceres::AutoDiffCostFunction<ErrorType, ErrorSize, CameraSize,
-                                          ShotSize, ShotSize, 3>(
-              new ErrorType(obs.camera->GetValue().GetProjectionType(),
-                            obs.coordinates, obs.std_deviation));
+                                          ShotSize, ShotSize, 3>(new ErrorType(
+              obs.camera->GetValue().GetProjectionType(), obs.coordinates,
+              obs.std_deviation, is_rig_camera_useful));
     }
     problem->AddResidualBlock(cost_function, loss,
                               obs.camera->GetValueData().data(),
@@ -494,6 +497,8 @@ struct ComputeResidualError {
   template <class T>
   static void Apply(bool use_analytical,
                     const PointProjectionObservation &obs) {
+    const bool is_rig_camera_useful =
+        IsRigCameraUseful(*obs.shot->GetRigCamera());
     if (use_analytical) {
       constexpr static int CameraSize = T::Size;
       using ErrorType = typename ErrorTraitsAnalytic<T, CameraSize>::Type;
@@ -501,7 +506,7 @@ struct ComputeResidualError {
 
       VecNd<ErrorSize> residuals;
       ErrorType error(obs.camera->GetValue().GetProjectionType(),
-                      obs.coordinates, 1.0);
+                      obs.coordinates, 1.0, is_rig_camera_useful);
       const double *params[] = {
           obs.camera->GetValueData().data(),
           obs.shot->GetRigInstance()->GetValueData().data(),
@@ -515,7 +520,7 @@ struct ComputeResidualError {
 
       VecNd<ErrorSize> residuals;
       ErrorType error(obs.camera->GetValue().GetProjectionType(),
-                      obs.coordinates, 1.0);
+                      obs.coordinates, 1.0, is_rig_camera_useful);
       error(obs.camera->GetValueData().data(),
             obs.shot->GetRigInstance()->GetValueData().data(),
             obs.shot->GetRigCamera()->GetValueData().data(),
@@ -556,17 +561,17 @@ void BundleAdjuster::Run() {
   ceres::Problem problem;
 
   // Add cameras
-  for (auto &i : cameras_) {
-    auto &data = i.second.GetValueData();
+  for (auto &[_, cam] : cameras_) {
+    auto &data = cam.GetValueData();
     problem.AddParameterBlock(data.data(), data.size());
 
     // Lock parameters based on bitmask of parameters : only constant for now
-    if (i.second.GetParametersToOptimize().empty()) {
+    if (cam.GetParametersToOptimize().empty()) {
       problem.SetParameterBlockConstant(data.data());
     }
 
     // Add a barrier for constraining transition of dual to stay in [0, 1]
-    const auto camera = i.second.GetValue();
+    const auto camera = cam.GetValue();
     if (camera.GetProjectionType() == geometry::ProjectionType::DUAL) {
       const auto types = camera.GetParametersTypes();
       int index = -1;
@@ -915,19 +920,13 @@ void BundleAdjuster::Run() {
         up_vector_loss = new ceres::CauchyLoss(1);
       }
 
-      auto &shot = shots_.at(a.shot_id);
-
-      auto *up_vector_cost_function =
-          new ceres::DynamicAutoDiffCostFunction<UpVectorError>(
+      ceres::CostFunction *up_cost_function =
+          new ceres::AutoDiffCostFunction<UpVectorError, 3, 6, 6>(
               new UpVectorError(a.up_vector, a.std_deviation));
-      up_vector_cost_function->AddParameterBlock(6);
-      up_vector_cost_function->SetNumResiduals(3);
-
-      auto camera_data = shot.GetRigCamera()->GetValueData().data();
-      auto instance_data = shot.GetRigInstance()->GetValueData().data();
-      up_vector_cost_function->AddParameterBlock(6);
-      problem.AddResidualBlock(up_vector_cost_function, up_vector_loss,
-                               instance_data, camera_data);
+      auto &shot = shots_.at(a.shot_id);
+      problem.AddResidualBlock(up_cost_function, up_vector_loss,
+                               shot.GetRigInstance()->GetValueData().data(),
+                               shot.GetRigCamera()->GetValueData().data());
     }
   }
 
@@ -1095,9 +1094,8 @@ void BundleAdjuster::ComputeCovariances(ceres::Problem *problem) {
 
     std::vector<std::pair<const double *, const double *>> covariance_blocks;
     for (auto &i : shots_) {
-      covariance_blocks.push_back(
-          std::make_pair(i.second.GetRigInstance()->GetValueData().data(),
-                         i.second.GetRigInstance()->GetValueData().data()));
+      covariance_blocks.emplace_back(i.second.GetRigInstance()->GetValueData().data(),
+                         i.second.GetRigInstance()->GetValueData().data());
     }
 
     bool worked = covariance.Compute(covariance_blocks, problem);
@@ -1130,7 +1128,9 @@ void BundleAdjuster::ComputeCovariances(ceres::Problem *problem) {
         break;
       }
       // stop after first Nan value
-      if (!computed) break;
+      if (!computed) {
+        break;
+      }
     }
   }
 
@@ -1192,6 +1192,10 @@ Point BundleAdjuster::GetPoint(const std::string &id) const {
     throw std::runtime_error("Point " + id + " doesn't exists");
   }
   return points_.at(id);
+}
+
+bool BundleAdjuster::HasPoint(const std::string &id) const {
+  return points_.find(id) != points_.end();
 }
 
 Reconstruction BundleAdjuster::GetReconstruction(

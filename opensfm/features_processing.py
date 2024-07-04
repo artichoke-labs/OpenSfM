@@ -1,13 +1,14 @@
+# pyre-unsafe
 import itertools
 import logging
 import math
 import queue
 import threading
 from timeit import default_timer as timer
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from opensfm import bow, features, io, log, pygeometry, upright, masking
+from opensfm import bow, features, io, log, masking, pygeometry, upright
 from opensfm.context import parallel_map
 from opensfm.dataset_base import DataSetBase
 
@@ -30,7 +31,7 @@ def run_features_processing(data: DataSetBase, images: List[str], force: bool) -
             f"Planning to use {mem_available} MB of RAM for both processing queue and parallel processing."
         )
 
-        # 50% for the queue / 50% for parralel processing
+        # 50% for the queue / 50% for parallel processing
         expected_mb = mem_available / 2
         expected_images = min(
             max_queue_size, int(expected_mb / average_image_size(data))
@@ -118,13 +119,13 @@ def is_high_res_panorama(
     return w == 2 * h or exif_pano
 
 
-class Counter(object):
+class Counter:
     """Lock-less counter from https://julien.danjou.info/atomic-lock-free-counters-in-python/
     that relies on the CPython impl. of itertools.count() that is thread-safe. Used, as for
     some reason, joblib doesn't like a good old threading.Lock (everything is stuck)
     """
 
-    def __init__(self) ->None:
+    def __init__(self) -> None:
         self.number_of_read = 0
         self.counter = itertools.count()
         self.read_lock = threading.Lock()
@@ -157,9 +158,9 @@ def read_images(
     expected: int,
     force: bool,
 ) -> None:
-    full_queue_timeout = 120
+    full_queue_timeout = 600
     for image in images:
-        logger.info(f"Reading data for image {image} (queue-size={queue.qsize()}")
+        logger.info(f"Reading data for image {image} (queue-size={queue.qsize()})")
         image_array = data.load_image(image)
         if data.config["features_bake_segmentation"]:
             segmentation_array = data.load_segmentation(image)
@@ -214,7 +215,7 @@ def bake_segmentation(
             points[:, :2],
             width,
             height,
-            exif["orientation"],
+            exif_orientation,
             new_width=new_width,
             new_height=new_height,
         ).astype(int)

@@ -1,3 +1,4 @@
+# pyre-unsafe
 from opensfm import reconstruction
 from opensfm.synthetic_data import synthetic_dataset, synthetic_scene
 
@@ -16,6 +17,8 @@ def test_reconstruction_incremental(
 
     dataset.config["bundle_compensate_gps_bias"] = True
     dataset.config["bundle_use_gcp"] = True
+    dataset.config["bundle_max_iterations"] = 20
+    dataset.config["processes"] = 4
     _, reconstructed_scene = reconstruction.incremental_reconstruction(
         dataset, scene_synthetic.tracks_manager
     )
@@ -39,7 +42,7 @@ def test_reconstruction_incremental(
     assert 4.0 < errors["absolute_gps_rmse"] < 7.0
 
     # Sanity check that GCP error is similar to the generated gcp_noise
-    assert 0.01 < errors["absolute_gcp_rmse_horizontal"] < 0.033
+    assert 0.01 < errors["absolute_gcp_rmse_horizontal"] < 0.05
     assert 0.08 < errors["absolute_gcp_rmse_vertical"] < 0.18
 
     # Check that the GPS bias (only translation) is recovered

@@ -70,7 +70,7 @@ class CovarianceFixture : public ::testing::Test {
 
   const double focal{1.0};
   double point[3];
-  typedef Eigen::AutoDiffScalar<VecXd> AScalar;
+  using AScalar = Eigen::AutoDiffScalar<VecXd>;
   AScalar point_adiff[3];
   AScalar projection_expected[2];
   Vec2d observation;
@@ -114,7 +114,7 @@ TEST_F(CovarianceFixture, EvaluatesPointCovarianceOK) {
                         {observation, observation}, point_tmp)
                         .first;
 
-  // Two pose looking with an angle of 90 degres
+  // Two pose looking with an angle of 90 degrees
   ASSERT_TRUE(covariance.determinant() > 1e-12);
 }
 

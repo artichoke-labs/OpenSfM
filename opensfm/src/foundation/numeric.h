@@ -1,6 +1,7 @@
 #pragma once
 
 #include <foundation/types.h>
+
 #include <Eigen/Dense>
 #include <array>
 
@@ -34,10 +35,11 @@ bool SolveAX0(const MAT& A, VEC* solution) {
 
   // Some nullspace will make a solution
   const bool some_nullspace = ratio > minimum_ratio;
-  if (some_nullspace)
+  if (some_nullspace) {
     return true;
-  else
+  } else {
     return false;
+  }
 }
 
 Eigen::Matrix3d SkewMatrix(const Eigen::Vector3d& v);
@@ -48,7 +50,8 @@ void SkewMatrixT(const V& v, M* matrix) {
 
 Eigen::Matrix3d ClosestRotationMatrix(const Eigen::Matrix3d& matrix);
 
-std::array<double, 4> SolveQuartic(const std::array<double, 5>& coefficients);
+bool SolveQuartic(const std::array<double, 5>& coefficients,
+                  std::array<double, 4>& roots);
 std::array<double, 4> RefineQuarticRoots(
     const std::array<double, 5>& coefficients,
     const std::array<double, 4>& roots);

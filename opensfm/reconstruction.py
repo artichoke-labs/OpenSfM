@@ -1,14 +1,15 @@
+# pyre-unsafe
 """Incremental reconstruction pipeline"""
 
 import datetime
 import enum
 import logging
 import math
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from itertools import combinations
 from timeit import default_timer as timer
-from typing import Dict, Any, List, Tuple, Set, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import cv2
 import numpy as np
@@ -20,10 +21,10 @@ from opensfm import (
     pygeometry,
     pymap,
     pysfm,
+    reconstruction_helpers as helpers,
     rig,
     tracking,
     types,
-    reconstruction_helpers as helpers,
 )
 from opensfm.align import align_reconstruction, apply_similarity
 from opensfm.context import current_memory_usage, parallel_map
@@ -47,6 +48,18 @@ def _get_camera_from_bundle(
         camera.set_parameter_value(k, v)
 
 
+def log_bundle_stats(bundle_type: str, bundle_report: Dict[str, Any]) -> None:
+    times = bundle_report["wall_times"]
+    time_secs = times["run"] + times["setup"] + times["teardown"]
+    num_images, num_points, num_reprojections = bundle_report["num_images"], bundle_report["num_points"], bundle_report["num_reprojections"]
+
+    msg = f"Ran {bundle_type} bundle in {time_secs:.2f} secs."
+    if num_points > 0 :
+        msg += f"with {num_images}/{num_points}/{num_reprojections} ({num_reprojections/num_points:.2f}) "
+        msg += "shots/points/proj. (avg. length)"
+
+    logger.info(msg)
+
 def bundle(
     reconstruction: types.Reconstruction,
     camera_priors: Dict[str, pygeometry.Camera],
@@ -62,7 +75,7 @@ def bundle(
         gcp if gcp is not None else [],
         config,
     )
-
+    log_bundle_stats("GLOBAL", report)
     logger.debug(report["brief_report"])
     return report
 
@@ -102,6 +115,7 @@ def bundle_local(
         central_shot_id,
         config,
     )
+    log_bundle_stats("LOCAL", report)
     logger.debug(report["brief_report"])
     return pt_ids, report
 
@@ -231,7 +245,7 @@ def add_shot(
     shot_id: str,
     pose: pygeometry.Pose,
 ) -> Set[str]:
-    """Add a shot to the recontruction.
+    """Add a shot to the reconstruction.
 
     In case of a shot belonging to a rig instance, the pose of
     shot will drive the initial pose setup of the rig instance.
@@ -910,6 +924,8 @@ class TrackTriangulator:
         all_combinations = list(combinations(range(len(ids)), 2))
 
         thresholds = len(os) * [reproj_threshold]
+        min_ray_angle_radians = np.radians(min_ray_angle_degrees)
+        max_ray_angle_radians = np.pi - min_ray_angle_radians
         for i in range(ransac_tries):
             random_id = int(np.random.rand() * (len(all_combinations) - 1))
             if random_id in combinatiom_tried:
@@ -925,7 +941,8 @@ class TrackTriangulator:
                 os_t,
                 bs_t,
                 thresholds,
-                np.radians(min_ray_angle_degrees),
+                min_ray_angle_radians,
+                max_ray_angle_radians,
             )
             X = pygeometry.point_refinement(os_t, bs_t, X, iterations)
 
@@ -941,7 +958,8 @@ class TrackTriangulator:
                         os[inliers],
                         bs[inliers],
                         len(inliers) * [reproj_threshold],
-                        np.radians(min_ray_angle_degrees),
+                        min_ray_angle_radians,
+                        max_ray_angle_radians,
                     )
                     new_X = pygeometry.point_refinement(
                         os[inliers], bs[inliers], X, iterations
@@ -995,11 +1013,13 @@ class TrackTriangulator:
 
         if len(os) >= 2:
             thresholds = len(os) * [reproj_threshold]
+            min_ray_angle_radians = np.radians(min_ray_angle_degrees)
             valid_triangulation, X = pygeometry.triangulate_bearings_midpoint(
                 np.asarray(os),
                 np.asarray(bs),
                 thresholds,
-                np.radians(min_ray_angle_degrees),
+                min_ray_angle_radians,
+                np.pi - min_ray_angle_radians,
             )
             if valid_triangulation:
                 X = pygeometry.point_refinement(
@@ -1474,6 +1494,8 @@ def grow_reconstruction(
                 )
                 remove_outliers(reconstruction, config, bundled_points)
                 step["local_bundle"] = brep
+
+            logger.info(f"Reconstruction now has {len(reconstruction.shots)} shots.")
 
             break
         else:

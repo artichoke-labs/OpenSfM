@@ -207,6 +207,12 @@ py::tuple BAHelpers::BundleLocal(
 
     // only add averaged rig position constraints to moving instances
     if (!fix_instance && gps_count > 0) {
+      LOG(INFO) << "bundle_use_gps: " << config["bundle_use_gps"].cast<bool>()
+                << ", adding average GPS prior to rig instance " << rig_instance_id
+                << ", count: " << gps_count
+                << ", avg pos: " << average_position.transpose()
+                << ", avg std: " << average_std
+                << ", scale group: " << gps_scale_group;
       average_position /= gps_count;
       average_std /= gps_count;
       ba.AddRigInstancePositionPrior(rig_instance_id, average_position,
@@ -215,6 +221,8 @@ py::tuple BAHelpers::BundleLocal(
     }
   }
 
+  size_t added_landmarks = 0;
+  size_t added_reprojections = 0;
   for (auto* shot : interior) {
     // Add all points of the shots that are in the interior
     for (const auto& lm_obs : shot->GetLandmarkObservations()) {
@@ -223,10 +231,12 @@ py::tuple BAHelpers::BundleLocal(
         points.insert(lm);
         pt_ids.append(lm->id_);
         ba.AddPoint(lm->id_, lm->GetGlobalPos(), point_constant);
+        ++added_landmarks;
       }
       const auto& obs = lm_obs.second;
       ba.AddPointProjectionObservation(shot->id_, lm_obs.first->id_, obs.point,
                                        obs.scale);
+      ++added_reprojections;
     }
   }
   for (auto* shot : boundary) {
@@ -236,6 +246,7 @@ py::tuple BAHelpers::BundleLocal(
         const auto& obs = lm_obs.second;
         ba.AddPointProjectionObservation(shot->id_, lm_obs.first->id_,
                                          obs.point, obs.scale);
+        ++added_reprojections;
       }
     }
   }
@@ -298,10 +309,13 @@ py::tuple BAHelpers::BundleLocal(
                                                             timer_run)
           .count() /
       1000000.0;
+  report["num_images"] = interior.size();
   report["num_interior_images"] = interior.size();
   report["num_boundary_images"] = boundary.size();
   report["num_other_images"] =
       map.NumberOfShots() - interior.size() - boundary.size();
+  report["num_points"] = added_landmarks;
+  report["num_reprojections"] = added_reprojections;
   return py::make_tuple(pt_ids, report);
 }
 
@@ -311,6 +325,7 @@ bool BAHelpers::TriangulateGCP(
     Vec3d& coordinates) {
   constexpr auto reproj_threshold{1.0};
   constexpr auto min_ray_angle = 0.1 * M_PI / 180.0;
+  constexpr auto max_ray_angle = M_PI - min_ray_angle;
   MatX3d os, bs;
   size_t added = 0;
   coordinates = Vec3d::Zero();
@@ -331,8 +346,8 @@ bool BAHelpers::TriangulateGCP(
   os.conservativeResize(added, Eigen::NoChange);
   if (added >= 2) {
     const std::vector<double> thresholds(added, reproj_threshold);
-    const auto& res = geometry::TriangulateBearingsMidpoint(os, bs, thresholds,
-                                                            min_ray_angle);
+    const auto& res = geometry::TriangulateBearingsMidpoint(
+        os, bs, thresholds, min_ray_angle, max_ray_angle);
     coordinates = res.second;
     return res.first;
   }
@@ -423,10 +438,16 @@ py::dict BAHelpers::BundleShotPoses(
     rig_instances_ids.insert(shot.GetRigInstanceId());
   }
   std::unordered_set<map::RigCameraId> rig_cameras_ids;
+  std::unordered_set<map::CameraId> cameras_ids;
   for (const auto& rig_instance_id : rig_instances_ids) {
     auto& instance = map.GetRigInstance(rig_instance_id);
     for (const auto& shot_n_rig_camera : instance.GetRigCameras()) {
-      rig_cameras_ids.insert(shot_n_rig_camera.second->id);
+      const auto rig_camera_id = shot_n_rig_camera.second->id;
+      rig_cameras_ids.insert(rig_camera_id);
+
+      const auto shot_id = shot_n_rig_camera.first;
+      const auto camera_id = map.GetShot(shot_id).GetCamera()->id;
+      cameras_ids.insert(camera_id);
     }
   }
 
@@ -437,16 +458,10 @@ py::dict BAHelpers::BundleShotPoses(
                     rig_camera_priors.at(rig_camera_id).pose, fix_rig_camera);
   }
 
-  std::unordered_set<map::CameraId> added_cameras;
-  for (const auto& shot_id : shot_ids) {
-    const auto& shot = map.GetShot(shot_id);
-    const auto& cam = *shot.GetCamera();
-    if (added_cameras.find(cam.id) != added_cameras.end()) {
-      continue;
-    }
-    const auto& cam_prior = camera_priors.at(cam.id);
-    ba.AddCamera(cam.id, cam, cam_prior, fix_cameras);
-    added_cameras.insert(cam.id);
+  for (const auto& camera_id : cameras_ids) {
+    const auto& cam = map.GetCamera(camera_id);
+    const auto& cam_prior = camera_priors.at(camera_id);
+    ba.AddCamera(camera_id, cam, cam_prior, fix_cameras);
   }
 
   std::unordered_set<map::Landmark*> landmarks;
@@ -620,8 +635,13 @@ py::dict BAHelpers::Bundle(
 
   // setup rig cameras
   constexpr size_t kMinRigInstanceForAdjust{10};
+  const size_t shots_per_rig_cameras =
+      map.GetRigCameras().size() > 0
+          ? static_cast<size_t>(map.GetShots().size() /
+                                map.GetRigCameras().size())
+          : 1;
   const auto lock_rig_camera =
-      map.GetRigInstances().size() <= kMinRigInstanceForAdjust;
+      shots_per_rig_cameras <= kMinRigInstanceForAdjust;
   for (const auto& camera_pair : map.GetRigCameras()) {
     // could be set to false (not locked) the day we expose leverarm adjustment
     const bool is_leverarm =
@@ -671,6 +691,7 @@ py::dict BAHelpers::Bundle(
     }
   }
 
+  size_t added_reprojections = 0;
   for (const auto& shot_pair : map.GetShots()) {
     const auto& shot = shot_pair.second;
 
@@ -685,6 +706,7 @@ py::dict BAHelpers::Bundle(
       const auto& obs = lm_obs.second;
       ba.AddPointProjectionObservation(shot.id_, lm_obs.first->id_, obs.point,
                                        obs.scale);
+      ++added_reprojections;
     }
   }
 
@@ -745,6 +767,9 @@ py::dict BAHelpers::Bundle(
                                                             timer_run)
           .count() /
       1000000.0;
+  report["num_images"] = map.GetShots().size();
+  report["num_points"] = map.GetLandmarks().size();
+  report["num_reprojections"] = added_reprojections;
   return report;
 }
 
@@ -827,7 +852,9 @@ void BAHelpers::AlignmentConstraints(
   // Triangulated vs measured points
   if (!gcp.empty() && config["bundle_use_gcp"].cast<bool>()) {
     for (const auto& point : gcp) {
-      if (point.lla_.empty()) continue;
+      if (point.lla_.empty()) {
+        continue;
+      }
       Vec3d coordinates;
       if (TriangulateGCP(point, shots, coordinates)) {
         Xp.row(idx) = topocentricConverter.ToTopocentric(point.GetLlaVec3d());

@@ -62,6 +62,15 @@ struct ProjectRigPoseDerivatives {
   }
 };
 
+struct PoseNormalizedDerivatives {
+  template <class TYPE, class T>
+  static void Apply(const T* point, const T* parameters, T* projected,
+                    T* jacobian) {
+    ComposeForwardDerivatives<T, true, Normalize, PoseFunctor>(
+        point, parameters, projected, jacobian);
+  }
+};
+
 struct RigPoseNormalizedDerivatives {
   template <class TYPE, class T>
   static void Apply(const T* point, const T* parameters, T* projected,
@@ -223,5 +232,5 @@ void Dispatch(const ProjectionType& type, IN&&... args) {
     default:
       throw std::runtime_error("Invalid ProjectionType");
   }
-};
+}
 }  // namespace geometry

@@ -1,13 +1,14 @@
+# pyre-unsafe
 """Tools to align a reconstruction to GPS and GCP data."""
 
 import logging
 import math
 from collections import defaultdict
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from opensfm import multiview, transformations as tf, types, pygeometry, pymap
+from opensfm import multiview, pygeometry, pymap, transformations as tf, types
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -61,8 +62,7 @@ def apply_similarity(
     """
     # Align points.
     for point in reconstruction.points.values():
-        Xp = s * A.dot(point.coordinates) + b
-        point.coordinates = Xp.tolist()
+        point.coordinates = s * A.dot(point.coordinates) + b
 
     # Align rig instances
     for rig_instance in reconstruction.rig_instances.values():
@@ -124,13 +124,13 @@ def alignment_constraints(
     """Gather alignment constraints to be used by checking bundle_use_gcp and bundle_use_gps."""
 
     X, Xp = [], []
-
+    logger.info(f"Collecting alignment constraints - bundle_use_gps:{config['bundle_use_gps']} bundle_use_gcp: {config['bundle_use_gcp']}")
     # Get Ground Control Point correspondences
     if gcp and config["bundle_use_gcp"]:
         triangulated, measured = triangulate_all_gcp(reconstruction, gcp)
         X.extend(triangulated)
         Xp.extend(measured)
-
+    logger.info(f"GCP constraints X ({len(X)}) - Xp ({len(Xp)})")
     # Get camera center correspondences
     if use_gps and config["bundle_use_gps"]:
         for rig_instance in reconstruction.rig_instances.values():
@@ -142,7 +142,7 @@ def alignment_constraints(
             if len(gpses) > 0:
                 X.append(rig_instance.pose.get_origin())
                 Xp.append(np.average(gpses, axis=0))
-
+    logger.info(f"GPS constraints X ({len(X)}) - Xp ({len(Xp)})")
     return X, Xp
 
 
@@ -250,19 +250,19 @@ def compute_orientation_prior_similarity(
      - horizontal: assumes cameras are looking towards the horizon
      - vertical: assumes cameras are looking down towards the ground
     """
-    X, Xp = alignment_constraints(config, reconstruction, gcp, use_gps)
-    X = np.array(X)
-    Xp = np.array(Xp)
-
-    if len(X) < 1:
-        return None
-
     p = estimate_ground_plane(reconstruction, config)
     if p is None:
         return None
     Rplane = multiview.plane_horizontalling_rotation(p)
     if Rplane is None:
         return None
+
+    X, Xp = alignment_constraints(config, reconstruction, gcp, use_gps)
+    X = np.array(X)
+    Xp = np.array(Xp)
+    if len(X) < 1:
+        return 1.0, Rplane, np.zeros(3)
+
     X = Rplane.dot(X.T).T
 
     # Estimate 2d similarity to align to GPS
@@ -372,11 +372,12 @@ def estimate_ground_plane(
     horizontally or vertically.
     """
     orientation_type = config["align_orientation_prior"]
-    onplane, verticals = [], []
+    onplane, verticals, ground_points = [], [], []
     for shot in reconstruction.shots.values():
-        R = shot.pose.get_rotation_matrix()
+        ground_points.append(shot.pose.get_origin())
         if not shot.metadata.orientation.has_value:
             continue
+        R = shot.pose.get_rotation_matrix()
 
         x, y, z = get_horizontal_and_vertical_directions(
             R, shot.metadata.orientation.value
@@ -393,9 +394,6 @@ def estimate_ground_plane(
             onplane.append(y)
             verticals.append(-z)
 
-    ground_points = []
-    for shot in reconstruction.shots.values():
-        ground_points.append(shot.pose.get_origin())
     ground_points = np.array(ground_points)
     ground_points -= ground_points.mean(axis=0)
 

@@ -1,3 +1,4 @@
+# pyre-unsafe
 import os
 
 import numpy as np
@@ -61,7 +62,7 @@ def export_bundler(
                 shot = shots[shot_id]
                 camera = shot.camera
                 if shot.camera.projection_type == "brown":
-                    # Will aproximate Brown model, not optimal
+                    # Will approximate Brown model, not optimal
                     focal_normalized = camera.focal_x
                 else:
                     focal_normalized = camera.focal

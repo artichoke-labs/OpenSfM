@@ -1,16 +1,16 @@
+# pyre-unsafe
 """Basic types for building a reconstruction."""
 from typing import Dict, Optional
 
 import numpy as np
-from opensfm import pygeometry
-from opensfm import pymap
+from opensfm import pygeometry, pymap
 from opensfm.geo import TopocentricConverter
 
 
 PANOSHOT_RIG_PREFIX = "panoshot_"
 
 
-class ShotMesh(object):
+class ShotMesh:
     """Triangular mesh of points visible in a shot
 
     Attributes:
@@ -23,7 +23,7 @@ class ShotMesh(object):
         self.faces = None
 
 
-class Reconstruction(object):
+class Reconstruction:
     """Defines the reconstructed scene.
 
     Attributes:
@@ -35,7 +35,10 @@ class Reconstruction(object):
 
     def __init__(self) -> None:
         """Defaut constructor"""
-        self.map = pymap.Map()
+        self._setup_from_map(pymap.Map())
+
+    def _setup_from_map(self, map_obj: pymap.Map):
+        self.map = map_obj
         self.camera_view = pymap.CameraView(self.map)
         self.bias_view = pymap.BiasView(self.map)
         self.rig_cameras_view = pymap.RigCameraView(self.map)
@@ -332,37 +335,15 @@ class Reconstruction(object):
         self.map.remove_observation(shot_id, lm_id)
 
     def __deepcopy__(self, d):
-        # create new reconstruction
         rec_cpy = Reconstruction()
-        rec_cpy.reference = self.reference
 
         copy_observations = False
         # Check if we also need the observations
         if "copy_observations" in d:
             copy_observations = d["copy_observations"]
 
-        # Copy the cameras
-        rec_cpy.cameras = self.cameras
-
-        # Copy the shots
-        for shot in self.shots.values():
-            rec_cpy.add_shot(shot)
-
-        # Copy the pano shots
-        for shot in self.pano_shots.values():
-            rec_cpy.add_pano_shot(shot)
-
-        # Copy the points
-        for point in self.points.values():
-            rec_cpy.add_point(point)
-            if copy_observations:
-                for shot, obs_id in point.get_observations().items():
-                    obs = shot.get_observation(obs_id)
-                    rec_cpy.add_observation(shot.id, point.id, obs)
-
-        # Copy the biases
-        for bias_id, bias in self.biases.items():
-            rec_cpy.set_bias(bias_id, bias)
+        map_copy = pymap.Map.deep_copy(self.map, copy_observations)
+        rec_cpy._setup_from_map(map_copy)
 
         return rec_cpy
 

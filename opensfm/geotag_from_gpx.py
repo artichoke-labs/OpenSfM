@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 
+# pyre-unsafe
+
 import datetime
 import math
 import os
@@ -322,7 +324,7 @@ def add_exif_using_timestamp(
 
     t = metadata["Exif.Photo.DateTimeOriginal"].value
 
-    # subtract offset in s beween gpx time and exif time
+    # subtract offset in s between gpx time and exif time
     t = t - datetime.timedelta(seconds=offset_time)
 
     try:

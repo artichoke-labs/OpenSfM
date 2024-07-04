@@ -1,3 +1,4 @@
+# pyre-unsafe
 import datetime
 import math
 import os
@@ -424,7 +425,7 @@ def rig_statistics(
             }
 
     for rig_camera_id in rig_cameras:
-        if rig_camera.id not in stats:
+        if rig_camera_id not in stats:
             continue
         if "optimized_values" not in stats[rig_camera_id]:
             del stats[rig_camera_id]

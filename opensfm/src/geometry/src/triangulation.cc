@@ -5,14 +5,15 @@
 #include <foundation/types.h>
 #include <geometry/transformations_functions.h>
 #include <geometry/triangulation.h>
-#include <math.h>
+#include <cmath>
 
 double AngleBetweenVectors(const Eigen::Vector3d &u, const Eigen::Vector3d &v) {
   double c = (u.dot(v)) / sqrt(u.dot(u) * v.dot(v));
-  if (std::fabs(c) >= 1.0)
+  if (std::fabs(c) >= 1.0) {
     return 0.0;
-  else
+  } else {
     return acos(c);
+  }
 }
 
 Eigen::Vector4d TriangulateBearingsDLTSolve(
@@ -98,7 +99,8 @@ TriangulateTwoBearingsMidpointMany(
 std::pair<bool, Eigen::Vector3d> TriangulateBearingsMidpoint(
     const Eigen::Matrix<double, Eigen::Dynamic, 3> &centers,
     const Eigen::Matrix<double, Eigen::Dynamic, 3> &bearings,
-    const std::vector<double> &threshold_list, double min_angle) {
+    const std::vector<double> &threshold_list,
+    double min_angle, double max_angle) {
   const int count = centers.rows();
 
   // Check angle between rays
@@ -106,7 +108,7 @@ std::pair<bool, Eigen::Vector3d> TriangulateBearingsMidpoint(
   for (int i = 0; i < count && !angle_ok; ++i) {
     for (int j = 0; j < i && !angle_ok; ++j) {
       const auto angle = AngleBetweenVectors(bearings.row(i), bearings.row(j));
-      if (angle >= min_angle) {
+      if (angle >= min_angle && angle <= max_angle) {
         angle_ok = true;
       }
     }
